@@ -34,6 +34,50 @@ class WebClientContextFactory(ClientContextFactory):
     def getContext(self, hostname, port):
         return ClientContextFactory.getContext(self)
 
+class EntryFormResource(resource.Resource):
+    isLeaf = True
+
+    def render_GET(self, request):
+        return '''
+<!DOCTYPE html>
+<html>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.2/jquery.min.js"></script>
+<body>
+
+<form id=submit action="">
+  <label for="owner">Owner</label>
+  <input id="owner" name="owner" type="text" />
+  <label for="number">Number</label>
+  <input id="number" name="number" type="text" />
+  <input name="submit" type="submit" />
+</form>
+
+<script>
+$(document).ready(function(e) {
+    $('#submit').submit(function() {
+        var number = parseInt($('input[name=number]').val());
+        var owner = $('input[name=owner]').val();
+        var data = {"py/tuple": [owner, number]};
+        
+        $.ajax({
+            url: "/dataentry",
+            type: "POST",
+            data: JSON.stringify(data),
+            dataType: "json",
+            cache: false,
+            success: function(html) {
+                alert("boo");
+            }
+        });
+        return false;
+    });
+});
+</script>
+
+</body>
+</html>
+'''
+
 class DataEntryResource(resource.Resource):
     isLeaf = True
 
@@ -42,15 +86,23 @@ class DataEntryResource(resource.Resource):
         self.datastore = datastore
         self.waiting_on = waiting_on
 
-    def render_GET(self, request):
-        return '<html>Up.</html>'
-
     def render_POST(self, request):
+        # these are the CROSS-ORIGIN RESOURCE SHARING headers required
+        # learned from here: http://msoulier.wordpress.com/2010/06/05/cross-origin-requests-in-twisted/
+        request.setHeader('Access-Control-Allow-Origin', '*')
+        request.setHeader('Access-Control-Allow-Methods', 'POST')
+        request.setHeader('Access-Control-Allow-Headers', 'x-prototype-version,x-requested-with')
+        request.setHeader('Access-Control-Max-Age', 2520) # 42 hours
+        
         raw = request.content.getvalue()
         data = jsonpickle.decode(raw)
+        # all of the above is outrageously insecure haha
         self.datastore.append(data)
         self.waiting_on.discard(data[0])
-        return 'received'
+        request.write('') # gotta use double-quotes in JSON apparently 
+        request.finish()
+
+        return NOT_DONE_YET
 
 class ConfigResource(resource.Resource):
     isLeaf = True
@@ -100,7 +152,7 @@ def wait_for_server(url):
 @inlineCallbacks
 def wait_for_data(config, participants):
     while True:
-        print 'aaa', participants
+        # print 'aaa', participants
         if participants:
             yield deferredSleep(1.0)
         else:
@@ -139,6 +191,7 @@ def start_client(config):
 
 def start_server(config):
     root = resource.Resource()
+    root.putChild('entryform', EntryFormResource())
     root.putChild('config', ConfigResource(config))
     root.putChild('dataentry', DataEntryResource(received_data, participants))
     site = server.Site(root)

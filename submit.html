@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.2/jquery.min.js"></script>
+<body>
+
+<form id=submit action="">
+  <label for="owner">Owner</label>
+  <input id="owner" name="owner" type="text" />
+  <label for="number">Number</label>
+  <input id="number" name="number" type="text" />
+  <input name="submit" type="submit" />
+</form>
+
+<script>
+
+/* Split number into shares (taken from Wikipedia) */
+function split(number, available, needed) {
+    var prime = 1031;
+    var coef = [], x, exp, c, accum, shares = [];
+    for (c = 1, coef[0] = number; c < needed; c++) {
+      coef[c] = Math.floor(Math.random() * (prime  - 1)) // look at other random number generator options
+    };
+    for (x = 1; x <= available; x++) {
+        for (exp = 1, accum = coef[0]; exp < needed; exp++) {
+          accum = (accum + (coef[exp] * (Math.pow(x, exp) % prime) % prime)) % prime;
+        }
+        shares[x - 1] = [x, accum];
+    }
+    return shares;
+}
+
+// there might be an error when reconstructing because above we start at 1 not sure about viff
+$(document).ready(function(e) {
+    $('#submit').submit(function() {
+        var number = parseInt($('input[name=number]').val());
+        var owner = $('input[name=owner]').val();
+        var shares = split(number, 3, 2);
+        shares.forEach(function(s) {
+          var port = 8000 + s[0],
+              share = s[1],
+              url = "https:/localhost:".concat(port.toString()).concat("/dataentry");
+          console.log(url);
+          var data = {"py/tuple": [owner, 1, share]};        
+          console.log(data);
+          $.ajax({
+              url: url,
+              type: "POST",
+              data: JSON.stringify(data),
+              dataType: "json",
+              cache: false,
+              success: function(html) {
+                console.log("success");
+              }
+          });          
+        });
+        return false;
+    });
+});
+</script>
+
+</body>
+</html>
