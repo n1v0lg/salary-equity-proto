@@ -18,6 +18,7 @@ from urllib2 import urlopen
 import httplib2
 import viffutil
 import sys
+import copy
 import time
 import mpc
 
@@ -25,11 +26,31 @@ pid = -1
 servers = [{'address': 'localhost','web_port': 8001, 'port': 9001, 'temp_id': 1, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'}, 
            {'address': 'localhost','web_port': 8002, 'port': 9002, 'temp_id': 2, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'},
            {'address': 'localhost','web_port': 8003, 'port': 9003, 'temp_id': 3, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'}] 
+participants = set(['a', 'b', 'c'])
+received_data = []
 seckey = None
 
 class WebClientContextFactory(ClientContextFactory):
     def getContext(self, hostname, port):
         return ClientContextFactory.getContext(self)
+
+class DataEntryResource(resource.Resource):
+    isLeaf = True
+
+    def __init__(self, datastore, waiting_on):
+        resource.Resource.__init__(self)
+        self.datastore = datastore
+        self.waiting_on = waiting_on
+
+    def render_GET(self, request):
+        return '<html>Up.</html>'
+
+    def render_POST(self, request):
+        raw = request.content.getvalue()
+        data = jsonpickle.decode(raw)
+        self.datastore.append(data)
+        self.waiting_on.discard(data[0])
+        return 'received'
 
 class ConfigResource(resource.Resource):
     isLeaf = True
@@ -46,42 +67,6 @@ def configure_mpc_client(pid, parameters):
     local_config = viffutil.get_lcl_config(parameters[pid])
     return local_config
 
-# could use twisted callbacks for this
-# def get_other_configs(config):
-#     for sid, server in enumerate(servers):
-#         if pid != sid:
-#             h = httplib2.Http(ca_certs=server['crt'])
-#             url = '{0}://{1}:{2}/config'.format('https', server['address'], server['web_port'])
-#             received = False
-#             other_config = None
-#             while not received:
-#                 try:
-#                     resp, content = h.request(url, 'GET')
-#                     other_config = jsonpickle.decode(content)
-#                 except Exception:
-#                     time.sleep(1)
-#                 else:
-#                     received = True
-#             server['viff_PK'] = other_config
-#         else:
-#             server['viff_PK'] = config['public']
-#     config = viffutil.set_glbl_configs(pid, config['private'], servers)
-#     return config
-
-def deferredSleep(duration):
-    return deferLater(reactor, duration, lambda: None)
-
-@inlineCallbacks
-def wait_for_server(url):
-    while True:
-        try:
-            # TODO: use twisted here too
-            urlopen(url)
-        except Exception as e:
-            yield deferredSleep(1.0)
-        else:
-            returnValue(url)
-
 class BeginningPrinter(Protocol):
     def __init__(self, finished):
         self.finished = finished
@@ -97,6 +82,29 @@ class BeginningPrinter(Protocol):
     def connectionLost(self, reason):
         print 'Finished receiving body:', reason.getErrorMessage()
         self.finished.callback(self.data)
+
+def deferredSleep(duration):
+    return deferLater(reactor, duration, lambda: None)
+
+@inlineCallbacks
+def wait_for_server(url):
+    while True:
+        try:
+            # TODO: use twisted here too
+            urlopen(url)
+        except Exception as e:
+            yield deferredSleep(1.0)
+        else:
+            returnValue(url)
+
+@inlineCallbacks
+def wait_for_data(config, participants):
+    while True:
+        print 'aaa', participants
+        if participants:
+            yield deferredSleep(1.0)
+        else:
+            returnValue(config)
 
 def process_responses(responses):
     defs = []
@@ -132,6 +140,7 @@ def start_client(config):
 def start_server(config):
     root = resource.Resource()
     root.putChild('config', ConfigResource(config))
+    root.putChild('dataentry', DataEntryResource(received_data, participants))
     site = server.Site(root)
     # domain.key is a contended resource as of now
     reactor.listenSSL(servers[pid]['web_port'], site, ssl.DefaultOpenSSLContextFactory('domain.key', 'domain.crt'))
@@ -141,5 +150,6 @@ if __name__ == '__main__':
     config = configure_mpc_client(pid, servers)
     start_server(config)
     d = start_client(config)
-    d.addCallback(mpc.run)
+    d.addCallback(wait_for_data, participants)
+    d.addCallback(mpc.run, received_data)
     reactor.run()

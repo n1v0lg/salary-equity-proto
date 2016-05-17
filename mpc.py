@@ -1,23 +1,27 @@
 from viff.field import GF
 from viff.runtime import create_runtime, Runtime
 from viff.config import load_config
+from viff.runtime import Share
 
-def run(config):
+def to_share(rt, Zp, val):
+    rt.increment_pc()
+    el = Zp(val)
+    return Share(rt, Zp, el)
+
+def run(config, data):
     Zp = GF(1031)
     id, players = load_config(config)
-    input = 7
 
     def protocol(rt):
-
         def got_result(result):
-            print "Sum:", result
+            print "Sum of squares:", result
             rt.shutdown()
 
-        x, y, z = rt.shamir_share([1, 2, 3], Zp, input)
-        sum = x + y + z
-        opened_sum = rt.open(sum)
-        opened_sum.addCallback(got_result)
+        vals = [to_share(rt, Zp, val) for owner, serial, val in data]
+        squares = map(lambda x: x * x, vals)
+        res = reduce(lambda x, y: x + y, squares)
+        opened = rt.open(res)
+        opened.addCallback(got_result)
 
     pre_runtime = create_runtime(id, players, 1)
     pre_runtime.addCallback(protocol)
-
