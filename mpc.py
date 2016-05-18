@@ -23,5 +23,9 @@ def run(config, data):
         opened = rt.open(res)
         opened.addCallback(got_result)
 
+    def errorHandler(failure):
+        print "Error: %s" % failure
+
     pre_runtime = create_runtime(id, players, 1)
     pre_runtime.addCallback(protocol)
+    pre_runtime.addErrback(errorHandler)

@@ -8,7 +8,6 @@ from twisted.internet.task import deferLater
 from twisted.internet.defer import inlineCallbacks, returnValue, DeferredList, Deferred
 from twisted.web.server import NOT_DONE_YET
 import viff.reactor
-# viff.reactor.install()
 from twisted.internet import ssl, reactor
 from twisted.internet.task import LoopingCall
 
@@ -23,12 +22,14 @@ import time
 import mpc
 
 pid = -1
-servers = [{'address': 'localhost','web_port': 8001, 'port': 9001, 'temp_id': 1, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'}, 
-           {'address': 'localhost','web_port': 8002, 'port': 9002, 'temp_id': 2, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'},
-           {'address': 'localhost','web_port': 8003, 'port': 9003, 'temp_id': 3, 'viff_PK': None, 'keysize': 1024, 'crt': 'domain.crt'}] 
+servers = [{'address': 'localhost','web_port': 8001, 'port': 9001, 'temp_id': 1, 'viff_PK': None, 'keysize': 1024, 'cert': 'ca.cert'}, 
+           {'address': 'localhost','web_port': 8002, 'port': 9002, 'temp_id': 2, 'viff_PK': None, 'keysize': 1024, 'cert': 'ca.cert'},
+           {'address': 'localhost','web_port': 8003, 'port': 9003, 'temp_id': 3, 'viff_PK': None, 'keysize': 1024, 'cert': 'ca.cert'}] 
 participants = set(['a', 'b', 'c'])
 received_data = []
 seckey = None
+
+# TODO: prevent twisted from dumping stacktrace to client
 
 class WebClientContextFactory(ClientContextFactory):
     def getContext(self, hostname, port):
@@ -37,71 +38,36 @@ class WebClientContextFactory(ClientContextFactory):
 class EntryFormResource(resource.Resource):
     isLeaf = True
 
+    def __init__(self, html):
+        resource.Resource.__init__(self)
+        self.html = html
+
     def render_GET(self, request):
-        return '''
-<!DOCTYPE html>
-<html>
-<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.12.2/jquery.min.js"></script>
-<body>
-
-<form id=submit action="">
-  <label for="owner">Owner</label>
-  <input id="owner" name="owner" type="text" />
-  <label for="number">Number</label>
-  <input id="number" name="number" type="text" />
-  <input name="submit" type="submit" />
-</form>
-
-<script>
-$(document).ready(function(e) {
-    $('#submit').submit(function() {
-        var number = parseInt($('input[name=number]').val());
-        var owner = $('input[name=owner]').val();
-        var data = {"py/tuple": [owner, number]};
-        
-        $.ajax({
-            url: "/dataentry",
-            type: "POST",
-            data: JSON.stringify(data),
-            dataType: "json",
-            cache: false,
-            success: function(html) {
-                alert("boo");
-            }
-        });
-        return false;
-    });
-});
-</script>
-
-</body>
-</html>
-'''
+        # figure out the twisted way to do this
+        return self.html
 
 class DataEntryResource(resource.Resource):
     isLeaf = True
 
     def __init__(self, datastore, waiting_on):
         resource.Resource.__init__(self)
+        self.valid_origins = ['https://localhost:8001', 'https://localhost:8002', 'https://localhost:8003']
         self.datastore = datastore
         self.waiting_on = waiting_on
 
     def render_POST(self, request):
-        # these are the CROSS-ORIGIN RESOURCE SHARING headers required
-        # learned from here: http://msoulier.wordpress.com/2010/06/05/cross-origin-requests-in-twisted/
-        request.setHeader('Access-Control-Allow-Origin', '*')
-        request.setHeader('Access-Control-Allow-Methods', 'POST')
-        request.setHeader('Access-Control-Allow-Headers', 'x-prototype-version,x-requested-with')
-        request.setHeader('Access-Control-Max-Age', 2520) # 42 hours
+        origin = request.getHeader('origin')
+        if origin in self.valid_origins:
+            request.setHeader('Access-Control-Allow-Origin', origin)
+            request.setHeader('Access-Control-Allow-Methods', 'POST')
         
         raw = request.content.getvalue()
-        data = jsonpickle.decode(raw)
-        # all of the above is outrageously insecure haha
+        data = jsonpickle.decode(raw) # outrageously insecure
         self.datastore.append(data)
         self.waiting_on.discard(data[0])
-        request.write('') # gotta use double-quotes in JSON apparently 
+        request.write('{response: "OK"}') 
         request.finish()
-
+    
         return NOT_DONE_YET
 
 class ConfigResource(resource.Resource):
@@ -152,7 +118,7 @@ def wait_for_server(url):
 @inlineCallbacks
 def wait_for_data(config, participants):
     while True:
-        # print 'aaa', participants
+        print 'aaa', participants
         if participants:
             yield deferredSleep(1.0)
         else:
@@ -164,7 +130,6 @@ def process_responses(responses):
         finished = Deferred()
         resp.deliverBody(BeginningPrinter(finished))
         defs.append(finished)
-    # print defs
     return DeferredList(defs)
 
 def process_configs(configs, config):
@@ -191,12 +156,12 @@ def start_client(config):
 
 def start_server(config):
     root = resource.Resource()
-    root.putChild('entryform', EntryFormResource())
+    html = open('submit.html').read()
+    root.putChild('entryform', EntryFormResource(html))
     root.putChild('config', ConfigResource(config))
     root.putChild('dataentry', DataEntryResource(received_data, participants))
     site = server.Site(root)
-    # domain.key is a contended resource as of now
-    reactor.listenSSL(servers[pid]['web_port'], site, ssl.DefaultOpenSSLContextFactory('domain.key', 'domain.crt'))
+    reactor.listenSSL(servers[pid]['web_port'], site, ssl.DefaultOpenSSLContextFactory('domain.key', 'domain.cert'))
         
 if __name__ == '__main__':
     pid = int(sys.argv[1])
