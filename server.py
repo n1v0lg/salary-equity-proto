@@ -10,16 +10,20 @@ from twisted.web.server import NOT_DONE_YET
 import viff.reactor
 from twisted.internet import ssl, reactor
 from twisted.internet.task import LoopingCall
-
-from multiprocessing import Process
+from OpenSSL import SSL
+import errno    
 import jsonpickle
-from urllib2 import urlopen
+from urllib2 import urlopen, URLError
+import requests
 import httplib2
 import viffutil
 import sys
 import copy
 import time
 import mpc
+from twisted.internet.protocol import ReconnectingClientFactory
+
+# TODO: prevent twisted from dumping stacktrace to client
 
 pid = -1
 servers = [{'address': 'localhost','web_port': 8001, 'port': 9001, 'temp_id': 1, 'viff_PK': None, 'keysize': 1024, 'cert': 'ca.cert'}, 
@@ -29,11 +33,17 @@ participants = set(['a', 'b', 'c'])
 received_data = []
 seckey = None
 
-# TODO: prevent twisted from dumping stacktrace to client
-
 class WebClientContextFactory(ClientContextFactory):
     def getContext(self, hostname, port):
         return ClientContextFactory.getContext(self)
+
+class CtxFactory(ssl.ClientContextFactory):
+    def getContext(self, hostname, port):
+        self.method = SSL.SSLv23_METHOD
+        ctx = ssl.ClientContextFactory.getContext(self)
+        ctx.use_certificate_file('player-{0}.cert'.format(pid + 1))
+        ctx.use_privatekey_file('player-{0}.key'.format(pid + 1))
+        return ctx
 
 class EntryFormResource(resource.Resource):
     isLeaf = True
@@ -98,39 +108,50 @@ class BeginningPrinter(Protocol):
             self.remaining -= len(display)
 
     def connectionLost(self, reason):
-        print 'Finished receiving body:', reason.getErrorMessage()
+        # print 'Finished receiving body:', reason.getErrorMessage()
         self.finished.callback(self.data)
 
 def deferredSleep(duration):
     return deferLater(reactor, duration, lambda: None)
 
-@inlineCallbacks
-def wait_for_server(url):
-    while True:
-        try:
-            # TODO: use twisted here too
-            urlopen(url)
-        except Exception as e:
-            yield deferredSleep(1.0)
-        else:
-            returnValue(url)
-
+# @inlineCallbacks
+# def wait_for_server(url):
+#     print url
+#     while True:
+#         print 'waiting for server'
+#         try:
+#             # TODO: use twisted here too
+#             print 'here'
+#             temp = urlopen(url)
+#             print temp
+#             print 'hmmm'
+#         except URLError as e:
+#             print 'there'
+#             yield deferredSleep(0.01)
+#             # if e.reason.errno == errno.ECONNREFUSED:
+#             #     yield deferredSleep(1.0)
+#             # else:
+#             #     returnValue(url)
+#         else:
+#             print 'everywhere'
+#             returnValue(url)
+    
 @inlineCallbacks
 def wait_for_data(config, participants):
     while True:
-        print 'aaa', participants
+        print 'Waiting on participants:', list(participants)
         if participants:
             yield deferredSleep(1.0)
         else:
             returnValue(config)
 
-def process_responses(responses):
-    defs = []
-    for flag, resp in responses:
-        finished = Deferred()
-        resp.deliverBody(BeginningPrinter(finished))
-        defs.append(finished)
-    return DeferredList(defs)
+# def process_responses(responses):
+#     deferreds = []
+#     for flag, resp in responses:
+#         finished = Deferred()
+#         resp.deliverBody(BeginningPrinter(finished))
+#         deferreds.append(finished)
+#     return DeferredList(deferreds)
 
 def process_configs(configs, config):
     for flag, raw_config in configs:
@@ -140,34 +161,84 @@ def process_configs(configs, config):
     complete = viffutil.set_glbl_configs(pid, config['private'], servers)
     return complete
 
-def servers_ready(urls):
-    contextFactory = WebClientContextFactory()
-    agent = Agent(reactor, contextFactory)
-    dl = DeferredList([agent.request('GET', url) for flag, url in urls])
-    return dl
+# def servers_ready(_, urls):
+#     contextFactory = WebClientContextFactory()
+#     agent = Agent(reactor, contextFactory)
+#     dl = DeferredList([agent.request('GET', url) for url in urls])
+#     return dl
     
+def response_received(response_wrapper):
+    response = response_wrapper.response
+    finished = Deferred()
+    response.deliverBody(BeginningPrinter(finished))
+    return finished
+
+class LoopWrap:
+    def success(self, response):
+        self.loop.response = response
+        self.loop.stop()
+        return
+
+    def failure(self, err):
+        return
+
+    def check_server(self, url):
+        contextFactory = WebClientContextFactory()
+        agent = Agent(reactor, contextFactory)
+        d = agent.request('GET', url)
+        d.addCallback(self.success)
+        d.addErrback(self.failure)
+        return d
+        
 def start_client(config):
     urls = ['{0}://{1}:{2}/config'.format('https', server['address'], server['web_port']) for sid, server in enumerate(servers) if pid != sid]
-    dl = DeferredList([wait_for_server(url) for url in urls])
-    dl.addCallback(servers_ready)
-    dl.addCallback(process_responses)
+    deferreds = []
+    for url in urls:
+        lw = LoopWrap()
+        l = LoopingCall(lw.check_server, url)
+        lw.loop = l
+        d = l.start(1.0)
+        d.addCallback(response_received)
+        deferreds.append(d)
+    dl = DeferredList(deferreds)
     dl.addCallback(process_configs, config)
     return dl
+
+# def verifyCallback(connection, x509, errnum, errdepth, ok):
+#     if not ok:
+#         print 'invalid cert from subject:', x509.get_subject()
+#         return False
+#     else:
+#         print "certs are fine"
+#     return True
 
 def start_server(config):
     root = resource.Resource()
     html = open('submit.html').read()
-    root.putChild('entryform', EntryFormResource(html))
     root.putChild('config', ConfigResource(config))
     root.putChild('dataentry', DataEntryResource(received_data, participants))
+    root.putChild('entryform', EntryFormResource(html))
     site = server.Site(root)
-    reactor.listenSSL(servers[pid]['web_port'], site, ssl.DefaultOpenSSLContextFactory('domain.key', 'domain.cert'))
+
+    myContextFactory = ssl.DefaultOpenSSLContextFactory(
+        'player-{0}.key'.format(pid + 1), 'player-{0}.cert'.format(pid + 1)
+        )
+    
+    # ctx = myContextFactory.getContext()
+    # ctx.set_verify(
+    #     SSL.VERIFY_PEER,
+    #     verifyCallback
+    #     )
+    # ctx.load_verify_locations("ca.cert")
+
+    reactor.listenSSL(servers[pid]['web_port'], site, myContextFactory)
         
 if __name__ == '__main__':
     pid = int(sys.argv[1])
     config = configure_mpc_client(pid, servers)
     start_server(config)
     d = start_client(config)
+    print 'starting client'
     d.addCallback(wait_for_data, participants)
     d.addCallback(mpc.run, received_data)
     reactor.run()

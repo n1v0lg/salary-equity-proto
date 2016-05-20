@@ -1,3 +1,4 @@
+from optparse import OptionParser
 from viff.field import GF
 from viff.runtime import create_runtime, Runtime
 from viff.config import load_config
@@ -26,6 +27,11 @@ def run(config, data):
     def errorHandler(failure):
         print "Error: %s" % failure
 
-    pre_runtime = create_runtime(id, players, 1)
+    parser = OptionParser()
+    Runtime.add_options(parser)
+    options, args = parser.parse_args()
+    options.ssl = True
+    
+    pre_runtime = create_runtime(id, players, 1, options)
     pre_runtime.addCallback(protocol)
     pre_runtime.addErrback(errorHandler)
