@@ -37,14 +37,6 @@ class WebClientContextFactory(ClientContextFactory):
     def getContext(self, hostname, port):
         return ClientContextFactory.getContext(self)
 
-class CtxFactory(ssl.ClientContextFactory):
-    def getContext(self, hostname, port):
-        self.method = SSL.SSLv23_METHOD
-        ctx = ssl.ClientContextFactory.getContext(self)
-        ctx.use_certificate_file('player-{0}.cert'.format(pid + 1))
-        ctx.use_privatekey_file('player-{0}.key'.format(pid + 1))
-        return ctx
-
 class EntryFormResource(resource.Resource):
     isLeaf = True
 
@@ -111,48 +103,6 @@ class BeginningPrinter(Protocol):
         # print 'Finished receiving body:', reason.getErrorMessage()
         self.finished.callback(self.data)
 
-def deferredSleep(duration):
-    return deferLater(reactor, duration, lambda: None)
-
-# @inlineCallbacks
-# def wait_for_server(url):
-#     print url
-#     while True:
-#         print 'waiting for server'
-#         try:
-#             # TODO: use twisted here too
-#             print 'here'
-#             temp = urlopen(url)
-#             print temp
-#             print 'hmmm'
-#         except URLError as e:
-#             print 'there'
-#             yield deferredSleep(0.01)
-#             # if e.reason.errno == errno.ECONNREFUSED:
-#             #     yield deferredSleep(1.0)
-#             # else:
-#             #     returnValue(url)
-#         else:
-#             print 'everywhere'
-#             returnValue(url)
-    
-@inlineCallbacks
-def wait_for_data(config, participants):
-    while True:
-        print 'Waiting on participants:', list(participants)
-        if participants:
-            yield deferredSleep(1.0)
-        else:
-            returnValue(config)
-
-# def process_responses(responses):
-#     deferreds = []
-#     for flag, resp in responses:
-#         finished = Deferred()
-#         resp.deliverBody(BeginningPrinter(finished))
-#         deferreds.append(finished)
-#     return DeferredList(deferreds)
-
 def process_configs(configs, config):
     for flag, raw_config in configs:
         decoded = jsonpickle.decode(raw_config)
@@ -161,21 +111,61 @@ def process_configs(configs, config):
     complete = viffutil.set_glbl_configs(pid, config['private'], servers)
     return complete
 
-# def servers_ready(_, urls):
-#     contextFactory = WebClientContextFactory()
-#     agent = Agent(reactor, contextFactory)
-#     dl = DeferredList([agent.request('GET', url) for url in urls])
-#     return dl
-    
+class DataWaiter:
+    def check_data(self, participants):
+        print 'Waiting on participants:', list(participants)
+        if not participants:
+            self.loop.stop()
+        return config
+
+def data_ready(_, config):
+    return config
+
+def wait_for_data(config, participants):
+    lw = DataWaiter()
+    l = LoopingCall(lw.check_data, participants)
+    lw.loop = l
+    d = l.start(1.0)
+    d.addCallback(data_ready, config)
+    return d
+
 def response_received(response_wrapper):
-    response = response_wrapper.response
+    response = response_wrapper.result
     finished = Deferred()
     response.deliverBody(BeginningPrinter(finished))
     return finished
 
-class LoopWrap:
+# def check_server(url):
+#     contextFactory = WebClientContextFactory()
+#     agent = Agent(reactor, contextFactory)
+#     return agent.request('GET', url)
+        
+# class LoopingCallWrap:
+#     def __init__(self, f, *args):
+#         self.args = (f, ) + args
+#         self.loop = LoopingCall(self.wrapper, *self.args)
+        
+#     def wrapper(self, f, args):
+#         d = f(args)
+#         d.addCallback(self.success)
+#         d.addErrback(self.failure)
+#         return d
+
+#     def success(self, result):
+#         self.loop.result = result
+#         self.loop.stop()
+#         return
+
+#     def failure(self, err):
+#         return
+
+#     def start(self, duration):
+#         d = self.loop.start(duration)
+#         return d
+
+class ConfigWaiter:
     def success(self, response):
-        self.loop.response = response
+        self.loop.result = response
         self.loop.stop()
         return
 
@@ -189,12 +179,12 @@ class LoopWrap:
         d.addCallback(self.success)
         d.addErrback(self.failure)
         return d
-        
+
 def start_client(config):
     urls = ['{0}://{1}:{2}/config'.format('https', server['address'], server['web_port']) for sid, server in enumerate(servers) if pid != sid]
     deferreds = []
     for url in urls:
-        lw = LoopWrap()
+        lw = ConfigWaiter()
         l = LoopingCall(lw.check_server, url)
         lw.loop = l
         d = l.start(1.0)
@@ -203,14 +193,6 @@ def start_client(config):
     dl = DeferredList(deferreds)
     dl.addCallback(process_configs, config)
     return dl
-
-# def verifyCallback(connection, x509, errnum, errdepth, ok):
-#     if not ok:
-#         print 'invalid cert from subject:', x509.get_subject()
-#         return False
-#     else:
-#         print "certs are fine"
-#     return True
 
 def start_server(config):
     root = resource.Resource()
@@ -223,14 +205,6 @@ def start_server(config):
     myContextFactory = ssl.DefaultOpenSSLContextFactory(
         'player-{0}.key'.format(pid + 1), 'player-{0}.cert'.format(pid + 1)
         )
-    
-    # ctx = myContextFactory.getContext()
-    # ctx.set_verify(
-    #     SSL.VERIFY_PEER,
-    #     verifyCallback
-    #     )
-    # ctx.load_verify_locations("ca.cert")
-
     reactor.listenSSL(servers[pid]['web_port'], site, myContextFactory)
         
 if __name__ == '__main__':
@@ -238,7 +212,6 @@ if __name__ == '__main__':
     config = configure_mpc_client(pid, servers)
     start_server(config)
     d = start_client(config)
-    print 'starting client'
     d.addCallback(wait_for_data, participants)
     d.addCallback(mpc.run, received_data)
     reactor.run()
