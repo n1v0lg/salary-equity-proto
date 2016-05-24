@@ -2,14 +2,9 @@ from optparse import OptionParser
 from viff.field import GF
 from viff.runtime import create_runtime, Runtime
 from viff.config import load_config
-from viff.runtime import Share
+import viffutil
 
-def to_share(rt, Zp, val):
-    rt.increment_pc()
-    el = Zp(val)
-    return Share(rt, Zp, el)
-
-def run(config, data):
+def run(config, repo):
     Zp = GF(1031)
     id, players = load_config(config)
 
@@ -18,7 +13,7 @@ def run(config, data):
             print "Sum of squares:", result
             rt.shutdown()
 
-        vals = [to_share(rt, Zp, val) for owner, serial, val in data]
+        vals = [viffutil.to_share(rt, Zp, val) for owner, serial, val in repo.get_shares()]
         squares = map(lambda x: x * x, vals)
         res = reduce(lambda x, y: x + y, squares)
         opened = rt.open(res)
