@@ -3,6 +3,7 @@ from viff.paillierutil import ViffPaillier
 from viff.util import rand
 from viff.libs.configobj import ConfigObj
 from viff.runtime import Share
+import math
 
 def to_share(rt, Zp, val):
     rt.increment_pc()
@@ -17,7 +18,10 @@ def create_global_mpc_details(pid, seckey, peers):
     def pid_from_player(part_id):
         return int(part_id[-1:])  # won't work for IDs greater than 9
 
-    config_template = _gen_config_templates(3, 1)[pid]
+    num_players = len(peers)
+    threshold = math.floor(num_players / 2)
+    threshold = 1 # hard-coded for now
+    config_template = _gen_config_templates(num_players, threshold)[pid]
     
     for player, params in config_template.iteritems():
         player_pid = pid_from_player(player)

@@ -44,12 +44,14 @@ class DataEndpoint(resource.Resource):
         self.session = session
 
     def render_POST(self, request):
-        origin = request.getHeader('origin')
-        print origin
-        if origin in self.peer_origins:
-            request.setHeader('Access-Control-Allow-Origin', origin)
-            request.setHeader('Access-Control-Allow-Methods', 'POST')
-        
+        # origin = request.getHeader('origin')
+        # if origin:
+        #     print origin
+        # print self.peer_origins
+        # if origin in self.peer_origins:
+        #     request.setHeader('Access-Control-Allow-Origin', origin)
+        #     request.setHeader('Access-Control-Allow-Methods', 'POST')
+        print self.peer_origins
         raw = request.content.getvalue()
         data = jsonpickle.decode(raw) # outrageously insecure
         self.repo.add_share(data)

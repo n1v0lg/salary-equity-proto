@@ -42,16 +42,25 @@ class Peer:
         self.repo = RepoMockup()
         self.session = SessionMockup(set(['a', 'b', 'c']))
 
-    def _generate_data_entry_form(self, template_path):
+    def _generate_data_entry_form(self, template_path, peers):
         with open(template_path) as template:
-            html = template.read()
+            parties_js = str(self._get_all_urls(peers, 'data_endpoint')).replace("'", '"')
+            print parties_js
+            html = template.read() \
+                            .replace("NUM_PARTIES_PLACEHOLDER", str(len(peers))) \
+                            .replace("THRESHOLD_PLACEHOLDER", str(2)) \
+                            .replace("COMP_PARTY_URLS_PLACEHOLDER", parties_js)
+            print html
             return html
 
-    def _to_url(self, protocol, address, port):
-        return '{0}://{1}:{2}/mpc_details'.format(protocol, address, port)
+    def _to_url(self, protocol, address, port, resource_name):
+        return '{0}://{1}:{2}/{3}'.format(protocol, address, port, resource_name)
 
-    def _get_peer_urls(self, pid, peers):
-        return [self._to_url('https', peer['address'], peer['web_port']) for other_pid, peer in peers.iteritems() if pid != other_pid]
+    def _get_all_urls(self, peers, resource_name):
+        return [self._to_url('https', peer['address'], peer['web_port'], resource_name) for other_pid, peer in peers.iteritems()]
+        
+    def _get_peer_urls(self, pid, peers, resource_name):
+        return [self._to_url('https', peer['address'], peer['web_port'], resource_name) for other_pid, peer in peers.iteritems() if pid != other_pid]
         
     def _response_received(self, response_wrapper):
         response = response_wrapper.result
@@ -67,12 +76,12 @@ class Peer:
         self.global_mpc_details  = viffutil.create_global_mpc_details(pid, local_details['private'], peers)
         return self.global_mpc_details
 
-    def start_web_server(self, address, port, key, cert, for_other_peers):
+    def start_web_server(self, pid, peers, address, port, key, cert, for_other_peers):
         root = resource.Resource()
         root.putChild('mpc_details', twistedutil.MPCDetails(for_other_peers))
-        html = self._generate_data_entry_form('submit.html')
+        html = self._generate_data_entry_form('submit.html', peers)
         root.putChild('data_entry_form', twistedutil.DataEntryForm(html))
-        peer_urls = self._get_peer_urls(self.pid, self.peers)
+        peer_urls = self._get_peer_urls(pid, peers, 'mpc_details')
         root.putChild('data_endpoint', twistedutil.DataEndpoint(self.repo, self.session, peer_urls))
         site = server.Site(root)
         context_factory = ssl.DefaultOpenSSLContextFactory(key, cert)
@@ -97,7 +106,7 @@ class Peer:
                 d.addErrback(self.failure)
                 return d
 
-        urls = self._get_peer_urls(pid, peers)
+        urls = self._get_peer_urls(pid, peers, 'mpc_details')
         deferreds = []
         for url in urls:
             lw = ConfigWaiter()
@@ -134,7 +143,7 @@ class Peer:
         sumofsquares.run(config, repo)
 
     def run(self):
-        self.start_web_server(self.address, self.web_port, self.key, self.cert, self.local_mpc_details['public'])
+        self.start_web_server(self.pid, self.peers, self.address, self.web_port, self.key, self.cert, self.local_mpc_details['public'])
         self.setup_mpc(self.pid, self.local_mpc_details, self.peers) \
             .addCallback(self.wait_for_data, self.session, self.repo) \
             .addCallback(self.run_mpc_protocol, self.repo)
