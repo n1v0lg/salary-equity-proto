@@ -1,32 +1,28 @@
-from optparse import OptionParser
 from viff.field import GF
-from viff.runtime import create_runtime, Runtime
-from viff.config import load_config
+import viff.reactor
+from twisted.internet import reactor
 import viffutil
+import peer
+from config import _config
 
-def run(config, repo):
+def protocol(rt):
+    def got_result(result):
+        print "Sum of squares:", result
+        rt.shutdown()
+
     Zp = GF(1031)
-    id, players = load_config(config)
+    vals = [viffutil.to_share(rt, Zp, val) for owner, serial, val in repo.get_shares()]
+    squares = map(lambda x: x * x, vals)
+    res = reduce(lambda x, y: x + y, squares)
+    opened = rt.open(res)
+    opened.addCallback(got_result)
 
-    def protocol(rt):
-        def got_result(result):
-            print "Sum of squares:", result
-            rt.shutdown()
+def errorHandler(failure):
+    print "Error: %s" % failure
 
-        vals = [viffutil.to_share(rt, Zp, val) for owner, serial, val in repo.get_shares()]
-        squares = map(lambda x: x * x, vals)
-        res = reduce(lambda x, y: x + y, squares)
-        opened = rt.open(res)
-        opened.addCallback(got_result)
+repo = peer.RepoMockup()
+session = peer.SessionMockup(set(['a', 'b', 'c']))
 
-    def errorHandler(failure):
-        print "Error: %s" % failure
-
-    parser = OptionParser()
-    Runtime.add_options(parser)
-    options, args = parser.parse_args()
-    options.ssl = True
-    
-    pre_runtime = create_runtime(id, players, 1, options)
-    pre_runtime.addCallback(protocol)
-    pre_runtime.addErrback(errorHandler)
+cluster = peer.start_cluster(_config, repo, session)
+cluster.addCallback(protocol)
+reactor.run()

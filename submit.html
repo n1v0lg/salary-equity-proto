@@ -38,9 +38,6 @@ $(document).ready(function(e) {
         shares.forEach(function(s) {
             var share = s[1],
                 url = computing_party_urls[s[0] - 1];
-            // var port = 8000 + s[0],
-            //     share = s[1],
-            //     url = "https://localhost:".concat(port.toString()).concat("/data_endpoint");
             console.log(url);
             var data = {"py/tuple": [owner, 1, share]};        
             console.log(data);

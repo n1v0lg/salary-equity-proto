@@ -10,7 +10,7 @@ trap kill_c_procs INT
 for i in {1..3};
 do
     cd server-$i
-    python peer.py `expr $i - 1` &
+    python sumofsquares.py `expr $i - 1` &
     cd ../
 done
 wait

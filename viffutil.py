@@ -2,8 +2,10 @@ from viff.config import load_config, generate_configs, Player
 from viff.paillierutil import ViffPaillier
 from viff.util import rand
 from viff.libs.configobj import ConfigObj
-from viff.runtime import Share
+from viff.runtime import Share, create_runtime, Runtime
 import math
+from optparse import OptionParser
+from viff.config import load_config
 
 def to_share(rt, Zp, val):
     rt.increment_pc()
@@ -13,6 +15,15 @@ def to_share(rt, Zp, val):
 def _gen_config_templates(n, t):
     c_templates = generate_configs(n=n, t=t, skip_prss=True)
     return c_templates
+
+def create_preruntime(config):
+    id, players = load_config(config)
+    parser = OptionParser()
+    Runtime.add_options(parser)
+    options, args = parser.parse_args()
+    options.ssl = True
+    pre_runtime = create_runtime(id, players, 1, options)
+    return pre_runtime    
 
 def create_global_mpc_details(pid, seckey, peers):
     def pid_from_player(part_id):
