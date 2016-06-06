@@ -7,7 +7,7 @@ kill_c_procs() {
 
 trap kill_c_procs INT
 
-for i in {1..3};
+for i in {1..2};
 do
     cd server-$i
     python sumofsquares.py `expr $i - 1` &

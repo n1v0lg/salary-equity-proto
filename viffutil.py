@@ -3,6 +3,7 @@ from viff.paillierutil import ViffPaillier
 from viff.util import rand
 from viff.libs.configobj import ConfigObj
 from viff.runtime import Share, create_runtime, Runtime
+from viff.paillier import PaillierRuntime
 import math
 from optparse import OptionParser
 from viff.config import load_config
@@ -22,7 +23,10 @@ def create_preruntime(config):
     Runtime.add_options(parser)
     options, args = parser.parse_args()
     options.ssl = True
-    pre_runtime = create_runtime(id, players, 1, options)
+    if len(players) == 2:
+        pre_runtime = create_runtime(id, players, 1, options, runtime_class=PaillierRuntime)
+    else:
+        pre_runtime = create_runtime(id, players, 1, options)
     return pre_runtime    
 
 def create_global_mpc_details(pid, seckey, peers):
@@ -30,7 +34,6 @@ def create_global_mpc_details(pid, seckey, peers):
         return int(part_id[-1:])  # won't work for IDs greater than 9
 
     num_players = len(peers)
-    threshold = math.floor(num_players / 2)
     threshold = 1 # hard-coded for now
     config_template = _gen_config_templates(num_players, threshold)[pid]
     

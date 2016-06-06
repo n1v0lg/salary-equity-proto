@@ -23,26 +23,19 @@ class ConfigReader(Protocol):
     def connectionLost(self, reason):
         self.finished.callback(self.data)
 
-# TODO: DataEntryForm and DataEndpoint could be same resource
-class DataEntryForm(resource.Resource):
+class DataEntry(resource.Resource):
     isLeaf = True
 
-    def __init__(self, html):
+    def __init__(self, html, repo, session, peer_origins):
         resource.Resource.__init__(self)
         self.html = html
+        self.peer_origins = peer_origins
+        self.repo = repo
+        self.session = session
 
     def render_GET(self, request):
         # figure out the twisted way to do this
         return self.html
-
-class DataEndpoint(resource.Resource):
-    isLeaf = True
-
-    def __init__(self, repo, session, peer_origins):
-        resource.Resource.__init__(self)
-        self.peer_origins = peer_origins
-        self.repo = repo
-        self.session = session
 
     def render_POST(self, request):
         # origin = request.getHeader('origin')
@@ -50,13 +43,13 @@ class DataEndpoint(resource.Resource):
         #     request.setHeader('Access-Control-Allow-Origin', origin)
         #     request.setHeader('Access-Control-Allow-Methods', 'POST')
         raw = request.content.getvalue()
-        print raw
         data = jsonpickle.decode(raw) # outrageously insecure
+        print data
         self.repo.add_share(data)
         self.session.input_parties.discard(data[0])
         # request.write('{}') 
         # request.finish()
-        return "<html>OK</html>"    
+        return "<html>OK</html>"
         # return NOT_DONE_YET
 
 class MPCDetails(resource.Resource):

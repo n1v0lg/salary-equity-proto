@@ -13,8 +13,13 @@
 
 <script>
 
-/* Split number into shares (taken from Wikipedia) */
-function make_shares(number, available, needed) {
+// TODO: double-check this
+Number.prototype.mod = function(n) {
+    return ((this % n) + n) % n;
+};
+
+/* Shamir secret sharing (taken from Wikipedia) */
+function shamir_share(number, available, needed) {
     var prime = 1031;
     var coef = [], x, exp, c, accum, shares = [];
     for (c = 1, coef[0] = number; c < needed; c++) {
@@ -22,9 +27,22 @@ function make_shares(number, available, needed) {
     }
     for (x = 1; x <= available; x++) {
         for (exp = 1, accum = coef[0]; exp < needed; exp++) {
-            accum = (accum + (coef[exp] * (Math.pow(x, exp) % prime) % prime)) % prime;
+            accum = (accum + (coef[exp] * (Math.pow(x, exp).mod(prime)).mod(prime))).mod(prime);
         }
         shares[x - 1] = [x, accum];
+    }
+    return shares;
+}
+
+/* Additive secret sharing */
+function additive_share(v, n) {
+    var prime = 1031, shares = [];
+    shares[0] = [1, v];
+    for (x = 2; x <= n; x++) {
+        share = Math.floor(Math.random() * (prime  - 1));
+        shares[0][1] = (shares[0][1] - share).mod(prime);
+        // alert(shares[0][1]);
+        shares[x - 1] = [x, share]; 
     }
     return shares;
 }
@@ -33,7 +51,9 @@ $(document).ready(function(e) {
     $('#submit').submit(function() {
         var number = parseInt($('input[name=number]').val());
         var owner = $('input[name=owner]').val();
-        var shares = make_shares(number, NUM_PARTIES_PLACEHOLDER, THRESHOLD_PLACEHOLDER);
+        var shares = additive_share(number, NUM_PARTIES_PLACEHOLDER);
+        // var shares = shamir_share(number, NUM_PARTIES_PLACEHOLDER, THRESHOLD_PLACEHOLDER);
+        console.log(shares);
         var computing_party_urls = COMP_PARTY_URLS_PLACEHOLDER;
         shares.forEach(function(s) {
             var share = s[1],
